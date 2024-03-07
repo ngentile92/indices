@@ -17,7 +17,7 @@ with pathlib.Path("dev-requirements.txt").open() as dev_requirements_txt:
     ]
 
 setup(
-    name="scraper_precios",
+    name="indices",
     use_scm_version=True,
     packages=find_packages(),
     include_package_data=True,

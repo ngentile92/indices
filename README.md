@@ -1,4 +1,4 @@
-# scraper de precios
+# indices
 ## Installation
 
 - On Mac:
