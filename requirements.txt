@@ -1,0 +1,16 @@
+scrapy
+bs4
+openai
+pandas
+pyarrow
+selenium
+webdriver_manager
+mysql-connector-python
+gspread
+anyio
+seaborn
+unidecode
+beautifulsoup4
+cloudscraper
+numpy
+lxml
