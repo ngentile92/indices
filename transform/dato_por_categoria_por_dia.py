@@ -18,6 +18,12 @@ SELECT * FROM `slowpoke-v1`.alquileres
 query_dolar = """
 SELECT date, dolar_blue FROM `slowpoke-v1`.dolar;
 """
+
+query_electricidad = """
+SELECT * FROM `slowpoke-v1`.tarifas_electricidad;
+"""
+
+
 precios_supermercados = fetch_data(query_precios_supermercado)
 
 
@@ -130,8 +136,52 @@ if ultima_fecha < fecha_hoy:
     df_adicionales = df_adicionales.assign(**ultimos_valores)
     
     # Concatenar el DataFrame original con el de fechas adicionales
-    df_merge_completo = pd.concat([df_merge, df_adicionales], ignore_index=True)
+    alquileres_completo = pd.concat([df_merge, df_adicionales], ignore_index=True)
 else:
-    df_merge_completo = df_merge
+    alquileres_completo = df_merge
 
-df_merge_completo  # Mostrar las últimas filas para verificar el resultado
+# multiplicar el precio del alquiler por el ponderador correspondiente
+alquileres_completo['alquiler'] = alquileres_completo['alquiler'] * ponderadores_inflacion_actualizado.get('Alquileres', 1)
+
+alquileres_completo  # Mostrar las últimas filas para verificar el resultado
+
+precios_electricidad = fetch_data(query_electricidad)
+
+# Calcular promedio por fecha del costo fijo y del costo variable
+precios_electricidad_promedio = precios_electricidad.groupby('Date').agg({'Costo_fijo': 'mean', 'costo_variable': 'mean'}).reset_index()
+
+# Primero, necesitamos identificar el último mes presente en los datos y el mes actual para saber hasta dónde agregar datos.
+ultimo_mes_datos = precios_electricidad['Date'].max()
+mes_actual = pd.Timestamp('today').normalize()
+
+# Generar rango de meses desde el último mes en los datos hasta el mes actual
+rango_meses = pd.date_range(start=ultimo_mes_datos + pd.offsets.MonthBegin(1), end=mes_actual, freq='MS')
+
+# Si hay meses faltantes para agregar, proceder con la extrapolación
+if not rango_meses.empty:
+    # Tomar los últimos valores conocidos de Costo_fijo y costo_variable
+    ultimo_costo_fijo = precios_electricidad_promedio.iloc[-1]['Costo_fijo']
+    ultimo_costo_variable = precios_electricidad_promedio.iloc[-1]['costo_variable']
+
+    # Crear DataFrame con los nuevos meses y los últimos valores conocidos
+    df_nuevos_meses = pd.DataFrame({
+        'Date': rango_meses,
+        'Costo_fijo': ultimo_costo_fijo,
+        'costo_variable': ultimo_costo_variable
+    })
+
+    # Calcular "precio_total" para los nuevos meses
+    df_nuevos_meses['precio_total'] = df_nuevos_meses['Costo_fijo'] + df_nuevos_meses['costo_variable']
+
+    # Concatenar el DataFrame original (promedios) con el de los nuevos meses
+    df_actualizado = pd.concat([precios_electricidad_promedio, df_nuevos_meses], ignore_index=True)
+else:
+    df_actualizado = precios_electricidad_promedio
+
+# Crear nueva columna "precio total" que sea Costo_fijo + costo_variable * variable (asumiendo que la "variable" es una constante dada; aquí se usa 1 para simplificar)
+# Si "variable" se refiere a otra columna o valor, este cálculo necesita ser ajustado acordemente.
+df_actualizado['precio_total'] = df_actualizado['Costo_fijo'] + df_actualizado['costo_variable'] * 250  # Cambiar "1" por la variable adecuada si necesario
+
+#precio total * por ponderadores_inflacion_actualizado donde la key sea electricidad
+df_actualizado['precio_total'] = df_actualizado['precio_total'] * ponderadores_inflacion_actualizado.get('Electricidad', 1)
+df_actualizado
