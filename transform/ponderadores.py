@@ -24,3 +24,10 @@ ponderadores_inflacion_actualizado = {
     "limpieza": 0.021154621
 }
 
+
+ponderadores_alquileres = {
+    "mendoza": 0.15,
+    "rosario": 0.2,
+    "CABA": 0.45,
+    "cordoba": 0.2,
+}
