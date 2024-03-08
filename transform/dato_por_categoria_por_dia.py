@@ -24,19 +24,24 @@ SELECT * FROM `slowpoke-v1`.tarifas_electricidad;
 """
 
 
-precios_supermercados = fetch_data(query_precios_supermercado)
+def procesar_precios_supermercado(query, ponderadores_inflacion):
+    precios_supermercados = fetch_data(query)
 
+    # Aplanar los ponderadores de inflación
+    ponderadores_aplanados = {}
+    for key, value in ponderadores_inflacion.items():
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                ponderadores_aplanados[sub_key] = sub_value
+        else:
+            ponderadores_aplanados[key] = value
 
-ponderadores_aplanados = {}
-for key, value in ponderadores_inflacion_actualizado.items():
-    if isinstance(value, dict):
-        for sub_key, sub_value in value.items():
-            ponderadores_aplanados[sub_key] = sub_value
-    else:
-        ponderadores_aplanados[key] = value
+    # Aplicar ponderadores a los precios promedio
+    precios_supermercados['sum_ponderado'] = precios_supermercados.apply(
+        lambda row: row['precio_promedio'] * ponderadores_aplanados.get(row['categoria_indice'], 1), axis=1
+    )
 
-# Multiplicamos sum(p.precio) por el ponderador correspondiente
-precios_supermercados['sum_ponderado'] = precios_supermercados.apply(lambda row: row['precio_promedio'] * ponderadores_aplanados.get(row['categoria_indice'], 1), axis=1)
+    return precios_supermercados
 
 alquileres = fetch_data(query_alquileres)
 dolar = fetch_data(query_dolar)
