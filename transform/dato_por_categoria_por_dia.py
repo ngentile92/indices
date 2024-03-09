@@ -13,15 +13,17 @@ GROUP BY p.date, cp.categoria_indice
 
 query_alquileres = """
 SELECT * FROM `slowpoke-v1`.alquileres
+WHERE date >= '2024-03-01';
 """
 
 query_dolar = """
 SELECT date, dolar_blue FROM `slowpoke-v1`.dolar;
+WHERE date >= '2024-03-01';
 """
 
 query_electricidad = """
 SELECT * FROM `slowpoke-v1`.tarifas_electricidad
-WHERE date >= '2024-01-01';
+WHERE date >= '2024-02-01';
 """
 
 
@@ -132,7 +134,7 @@ def transformar_alquileres(df):
     df.drop('expensas', axis=1, inplace=True)  # Eliminar columna 'expensas'
     return df[['date', 'categoria_indice', 'precio_promedio']]
 
-def procesar_alquileres_no_ponderados():
+def procesar_alquileres_no_ponderados(query_alquileres, query_dolar):
     alquileres = fetch_data(query_alquileres)
     dolar = fetch_data(query_dolar)
     dolar_procesado = procesar_dolar(dolar)
@@ -153,24 +155,24 @@ def obtener_y_promediar_datos_electricidad(query_electricidad):
     precios_electricidad_promedio = precios_electricidad.groupby('Date').agg({'Costo_fijo': 'mean', 'costo_variable': 'mean'}).reset_index()
     return precios_electricidad_promedio
 
-def extender_datos_hasta_actual(df):
-    ultimo_mes_datos = df['Date'].max()
-    mes_actual = pd.Timestamp('today').normalize()
+def extender_datos_hasta_actual_con_dias(df):
+    ultimo_dia_datos = df['Date'].max()
+    dia_actual = pd.Timestamp('today').normalize()
 
-    rango_meses = pd.date_range(start=ultimo_mes_datos + pd.offsets.MonthBegin(1), end=mes_actual, freq='MS')
+    rango_dias = pd.date_range(start=ultimo_dia_datos + pd.Timedelta(days=1), end=dia_actual, freq='D')
 
-    if not rango_meses.empty:
+    if not rango_dias.empty:
         ultimo_costo_fijo = df.iloc[-1]['Costo_fijo']
         ultimo_costo_variable = df.iloc[-1]['costo_variable']
 
-        df_nuevos_meses = pd.DataFrame({
-            'Date': rango_meses,
+        df_nuevos_dias = pd.DataFrame({
+            'Date': rango_dias,
             'Costo_fijo': ultimo_costo_fijo,
             'costo_variable': ultimo_costo_variable,
             'precio_total': 0  # Se inicializa aquí y se calcula después
         })
 
-        df = pd.concat([df, df_nuevos_meses], ignore_index=True)
+        df = pd.concat([df, df_nuevos_dias], ignore_index=True)
 
     return df
 
@@ -188,7 +190,7 @@ def transformar_tarifas_electricidad(df):
 
 def procesar_datos_electricidad(query_electricidad):
     df = obtener_y_promediar_datos_electricidad(query_electricidad)
-    df = extender_datos_hasta_actual(df)
+    df = extender_datos_hasta_actual_con_dias(df)
     df = calcular_precio_total(df)
     df = transformar_tarifas_electricidad(df)
     df['Date'] = pd.to_datetime(df['Date']).dt.date  # Asegúrate de cambiar 'Date' a 'date' después
@@ -196,22 +198,28 @@ def procesar_datos_electricidad(query_electricidad):
 
     return df
 
-tarifas_electricidad = procesar_datos_electricidad(query_electricidad)
-alquileres_completo  = procesar_alquileres_no_ponderados()
-precios_supermercados = fetch_data(query_precios_supermercado)
-precios_supermercados['date'] = pd.to_datetime(precios_supermercados['date']).dt.date
 
 
-# Asumiendo que df1 es tu primer DataFrame, df2 el segundo y df3 el tercero
-# Primero, asegúrate de que las columnas de fecha tengan el mismo nombre y formato
-alquileres_completo['date'] = pd.to_datetime(alquileres_completo['date']).dt.date
-tarifas_electricidad.rename(columns={'Date': 'date'}, inplace=True)
-tarifas_electricidad['date'] = pd.to_datetime(tarifas_electricidad['date']).dt.date
+def generar_datos_por_categoria(query_precios_supermercado, query_alquileres, query_dolar, query_electricidad):
+    tarifas_electricidad = procesar_datos_electricidad(query_electricidad)
+    alquileres_completo  = procesar_alquileres_no_ponderados(query_alquileres, query_dolar)
+    precios_supermercados = fetch_data(query_precios_supermercado)
+    precios_supermercados['date'] = pd.to_datetime(precios_supermercados['date']).dt.date
+    # Asumiendo que df1 es tu primer DataFrame, df2 el segundo y df3 el tercero
+    # Primero, asegúrate de que las columnas de fecha tengan el mismo nombre y formato
+    alquileres_completo['date'] = pd.to_datetime(alquileres_completo['date']).dt.date
+    tarifas_electricidad.rename(columns={'Date': 'date'}, inplace=True)
+    tarifas_electricidad['date'] = pd.to_datetime(tarifas_electricidad['date']).dt.date
 
-# Ahora, concatena los DataFrames
-df_final = pd.concat([precios_supermercados, alquileres_completo, tarifas_electricidad])
-df_final.sort_values(by='date', inplace=True)
-df_final.reset_index(drop=True, inplace=True)
+    # Ahora, concatena los DataFrames
+    df_final = pd.concat([precios_supermercados, alquileres_completo, tarifas_electricidad])
+    df_final.sort_values(by='date', inplace=True)
+    df_final.reset_index(drop=True, inplace=True)
+    # eliminar todos datos inferiores a marzo
+    df_final = df_final[df_final['date'] >= pd.to_datetime('2024-03-01').date()]
+    return df_final
 
-# Mostrar el DataFrame final
-print(df_final)
+
+if __name__ == "__main__":
+    df_final = generar_datos_por_categoria(query_precios_supermercado, query_alquileres, query_dolar, query_electricidad)
+    df_final.to_csv('datos_por_categoria_por_dia.csv', index=False)
