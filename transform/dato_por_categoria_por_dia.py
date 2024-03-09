@@ -20,12 +20,12 @@ SELECT date, dolar_blue FROM `slowpoke-v1`.dolar;
 """
 
 query_electricidad = """
-SELECT * FROM `slowpoke-v1`.tarifas_electricidad;
+SELECT * FROM `slowpoke-v1`.tarifas_electricidad
+WHERE date >= '2024-01-01';
 """
 
 
-def procesar_precios_supermercado(query, ponderadores_inflacion):
-    precios_supermercados = fetch_data(query)
+def aplicar_ponderador_supermercado(precios_supermercados, ponderadores_inflacion):
 
     # Aplanar los ponderadores de inflación
     ponderadores_aplanados = {}
@@ -43,19 +43,22 @@ def procesar_precios_supermercado(query, ponderadores_inflacion):
 
     return precios_supermercados
 
-alquileres = fetch_data(query_alquileres)
-dolar = fetch_data(query_dolar)
-def corregir_valores(x):
-    if x['compra'] > 10000:  # Si compra es evidentemente un error
-        x['compra'] /= 100
-    if x['venta'] > 10000:  # Si venta es evidentemente un error
-        x['venta'] /= 100
-    return (x['venta'] + x['compra']) / 2
-dolar['dolar_blue'] = dolar['dolar_blue'].apply(ast.literal_eval)
 
-dolar['promedio'] = dolar['dolar_blue'].apply(lambda x: (x['venta'] + x['compra']) / 2)
-dolar['promedio'] = dolar['dolar_blue'].apply(corregir_valores)
+def corregir_valores(dolar):
+    if dolar['compra'] > 10000:  # Si compra es evidentemente un error
+        dolar['compra'] /= 100
+    if dolar['venta'] > 10000:  # Si venta es evidentemente un error
+        dolar['venta'] /= 100
+    return (dolar['venta'] + dolar['compra']) / 2
 
+def procesar_dolar(dolar):
+    dolar['dolar_blue'] = dolar['dolar_blue'].apply(ast.literal_eval)
+
+    dolar['promedio'] = dolar['dolar_blue'].apply(corregir_valores)
+    dolar['promedio'] = dolar['dolar_blue'].apply(lambda x: (x['venta'] + x['compra']) / 2)
+    dolar['date'] = dolar['date'].dt.date
+
+    return dolar
 
 
 # Re-definir la función de conversión
@@ -69,124 +72,146 @@ def convert_currency(row):
         pass
     return row
 
-# Corregir el tipo de dato de 'date' en df2 para que coincida con df1
-dolar['date'] = dolar['date'].dt.date
-alquileres['date'] = alquileres['date'].dt.date
-# Intentar el merge nuevamente
-merged_df = alquileres.merge(dolar, on='date', how='left')
+def unir_y_convertir(alquileres, dolar):
+    # Asegurarse de que 'date' en ambos DFs sea datetime64[ns]
+    alquileres['date'] = pd.to_datetime(alquileres['date']).dt.date
+    dolar['date'] = pd.to_datetime(dolar['date']).dt.date
 
-df_alquileres = merged_df.apply(convert_currency, axis=1)
+    # Realizar el merge
+    merged_df = alquileres.merge(dolar, on='date', how='left')
 
+    # Aplicar la conversión de moneda
+    df_alquileres = merged_df.apply(convert_currency, axis=1)
 
-def aplicar_ponderador(row):
-    # Obtener el ponderador para la localidad de la fila
-    ponderador = ponderadores_alquileres.get(row['localidad'], 1)  # Usar 1 como valor predeterminado si no se encuentra la localidad
-    # Aplicar el ponderador al valor del alquiler
-    row['alquiler'] *= ponderador
-    return row
-
-# Aplicar la función a cada fila del DataFrame
-df_alquileres_ponderados = df_alquileres.apply(aplicar_ponderador, axis=1)
-
-df_alquileres_ponderados[['id', 'date', 'alquiler', 'expensas', 'localidad']]
-
-#group by date and sum alquiler
-df_alquileres_ponderados = df_alquileres_ponderados.groupby('date').agg({'alquiler': 'mean', 'expensas': 'mean'}).reset_index()
+    return df_alquileres
 
 
-# Paso 1: Crear DataFrame completo con rango de fechas
-rango_fechas = pd.date_range(start=df_alquileres_ponderados['date'].min(), end=df_alquileres_ponderados['date'].max())
-df_fechas_completo = pd.DataFrame({'date': rango_fechas})
 
-# Convertir la columna 'date' en df_fechas_completo y df_alquileres_ponderados a datetime64[ns] si aún no lo son
-df_fechas_completo['date'] = pd.to_datetime(df_fechas_completo['date'])
-df_alquileres_ponderados['date'] = pd.to_datetime(df_alquileres_ponderados['date'])
+def aplicar_ponderador_por_ciudad_alquiler(df_alquileres, ponderadores_alquileres):
+    # transformar los valores "localidad" none por "CABA"
+    df_alquileres['localidad'] = df_alquileres['localidad'].fillna('CABA')
+    df_alquileres['alquiler_ponderado'] = df_alquileres.apply(lambda row: row['alquiler'] * ponderadores_alquileres.get(row['localidad'], 1), axis=1)
+    return df_alquileres
 
-# Ahora que ambos tienen el mismo tipo de dato en 'date', intentar hacer el merge nuevamente
-df_merge = df_fechas_completo.merge(df_alquileres_ponderados, on='date', how='left')
+def agrupar_y_promediar(df):
+    df_agrupado = df.groupby('date').agg({'alquiler': 'mean', 'expensas': 'mean'}).reset_index()
+    return df_agrupado
 
-# Paso 3: Llenar valores faltantes manualmente para cada columna numérica
-for col in ['alquiler', 'expensas']:
-    # Identificar índices de filas con valores NaN
-    indices_nan = df_merge[df_merge[col].isna()].index
+def completar_datos(df):
+    # Crear DataFrame completo con rango de fechas
+    rango_fechas = pd.date_range(start=df['date'].min(), end=df['date'].max())
+    df_fechas_completo = pd.DataFrame({'date': rango_fechas})
+    df_fechas_completo['date'] = pd.to_datetime(df_fechas_completo['date'])
+
+    df['date'] = pd.to_datetime(df['date'])
+
+    # Merge con DataFrame de fechas para encontrar y rellenar fechas faltantes
+    df_merge = df_fechas_completo.merge(df, on='date', how='left')
+
+    # Llenar valores faltantes
+    for col in ['alquiler', 'expensas']:
+        df_merge[col] = df_merge[col].fillna(method='ffill').fillna(method='bfill')
     
-    for i in indices_nan:
-        # Encontrar el valor anterior y posterior no-NaN más cercanos
-        prev_val = df_merge[col][:i].dropna().last_valid_index()
-        next_val = df_merge[col][i:].dropna().first_valid_index()
-        
-        # Calcular el promedio si ambos valores existen, sino usar el valor disponible
-        if pd.notna(prev_val) and pd.notna(next_val):
-            df_merge.loc[i, col] = (df_merge.loc[prev_val, col] + df_merge.loc[next_val, col]) / 2
-        elif pd.notna(prev_val):
-            df_merge.loc[i, col] = df_merge.loc[prev_val, col]
-        elif pd.notna(next_val):
-            df_merge.loc[i, col] = df_merge.loc[next_val, col]
-
-# El DataFrame df_merge ahora tiene las fechas completadas y los valores faltantes rellenados
-df_merge['date'] = pd.to_datetime(df_merge['date'])
-
-# Encontrar la fecha máxima en df_merge y la fecha de hoy
-ultima_fecha = df_merge['date'].max()
-fecha_hoy = pd.Timestamp('today').normalize()  # Normalizar para obtener solo la fecha sin componente de tiempo
-
-# Si la última fecha en df_merge es antes de hoy, necesitamos agregar filas hasta hoy
-if ultima_fecha < fecha_hoy:
-    # Crear un DataFrame con el rango de fechas faltantes hasta hoy
-    fechas_adicionales = pd.date_range(start=ultima_fecha + pd.Timedelta(days=1), end=fecha_hoy)
-    df_adicionales = pd.DataFrame({'date': fechas_adicionales})
+    # Extender hasta la fecha actual si es necesario
+    ultima_fecha = df_merge['date'].max()
+    fecha_hoy = pd.Timestamp('today').normalize()
+    if ultima_fecha < fecha_hoy:
+        fechas_adicionales = pd.date_range(start=ultima_fecha + pd.Timedelta(days=1), end=fecha_hoy)
+        df_adicionales = pd.DataFrame({'date': fechas_adicionales})
+        ultimos_valores = df_merge.iloc[-1][['alquiler', 'expensas']].to_dict()
+        df_adicionales = df_adicionales.assign(**ultimos_valores)
+        df_merge = pd.concat([df_merge, df_adicionales], ignore_index=True)
     
-    # Replicar los últimos valores conocidos de 'alquiler' y 'expensas' para las nuevas fechas
-    ultimos_valores = df_merge.iloc[-1][['alquiler', 'expensas']].to_dict()
-    df_adicionales = df_adicionales.assign(**ultimos_valores)
-    
-    # Concatenar el DataFrame original con el de fechas adicionales
-    alquileres_completo = pd.concat([df_merge, df_adicionales], ignore_index=True)
-else:
-    alquileres_completo = df_merge
+    df_merge['date'] = pd.to_datetime(df_merge['date'])
 
-# multiplicar el precio del alquiler por el ponderador correspondiente
-alquileres_completo['alquiler'] = alquileres_completo['alquiler'] * ponderadores_inflacion_actualizado.get('Alquileres', 1)
+    return df_merge
+def transformar_alquileres(df):
+    df['date'] = pd.to_datetime(df['date']).dt.date  # Convertir a solo fecha
+    df['categoria_indice'] = 'Alquileres'  # Columna nueva con valor 'Alquileres'
+    df.rename(columns={'alquiler': 'precio_promedio'}, inplace=True)  # Renombrar 'alquiler' a 'precio_promedio'
+    df.drop('expensas', axis=1, inplace=True)  # Eliminar columna 'expensas'
+    return df[['date', 'categoria_indice', 'precio_promedio']]
 
-alquileres_completo  # Mostrar las últimas filas para verificar el resultado
+def procesar_alquileres_no_ponderados():
+    alquileres = fetch_data(query_alquileres)
+    dolar = fetch_data(query_dolar)
+    dolar_procesado = procesar_dolar(dolar)
+    df_alquileres = unir_y_convertir(alquileres, dolar_procesado)
+    df_alquileres_ponderados = aplicar_ponderador_por_ciudad_alquiler(df_alquileres, ponderadores_alquileres)
+    # Nuevo paso: Agrupar por fecha y calcular promedios antes de completar datos
+    df_alquileres_agrupados = agrupar_y_promediar(df_alquileres_ponderados)
+    # Ahora completamos los datos, incluyendo la lógica de fechas faltantes y aplicación final de ponderadores
+    df_alquileres_completos = completar_datos(df_alquileres_agrupados)
+    df_alquileres_completos = transformar_alquileres(df_alquileres_completos)
+    df_alquileres_completos['date'] = pd.to_datetime(df_alquileres_completos['date']).dt.date
 
-precios_electricidad = fetch_data(query_electricidad)
+    return df_alquileres_completos
 
-# Calcular promedio por fecha del costo fijo y del costo variable
-precios_electricidad_promedio = precios_electricidad.groupby('Date').agg({'Costo_fijo': 'mean', 'costo_variable': 'mean'}).reset_index()
 
-# Primero, necesitamos identificar el último mes presente en los datos y el mes actual para saber hasta dónde agregar datos.
-ultimo_mes_datos = precios_electricidad['Date'].max()
-mes_actual = pd.Timestamp('today').normalize()
+def obtener_y_promediar_datos_electricidad(query_electricidad):
+    precios_electricidad = fetch_data(query_electricidad)
+    precios_electricidad_promedio = precios_electricidad.groupby('Date').agg({'Costo_fijo': 'mean', 'costo_variable': 'mean'}).reset_index()
+    return precios_electricidad_promedio
 
-# Generar rango de meses desde el último mes en los datos hasta el mes actual
-rango_meses = pd.date_range(start=ultimo_mes_datos + pd.offsets.MonthBegin(1), end=mes_actual, freq='MS')
+def extender_datos_hasta_actual(df):
+    ultimo_mes_datos = df['Date'].max()
+    mes_actual = pd.Timestamp('today').normalize()
 
-# Si hay meses faltantes para agregar, proceder con la extrapolación
-if not rango_meses.empty:
-    # Tomar los últimos valores conocidos de Costo_fijo y costo_variable
-    ultimo_costo_fijo = precios_electricidad_promedio.iloc[-1]['Costo_fijo']
-    ultimo_costo_variable = precios_electricidad_promedio.iloc[-1]['costo_variable']
+    rango_meses = pd.date_range(start=ultimo_mes_datos + pd.offsets.MonthBegin(1), end=mes_actual, freq='MS')
 
-    # Crear DataFrame con los nuevos meses y los últimos valores conocidos
-    df_nuevos_meses = pd.DataFrame({
-        'Date': rango_meses,
-        'Costo_fijo': ultimo_costo_fijo,
-        'costo_variable': ultimo_costo_variable
-    })
+    if not rango_meses.empty:
+        ultimo_costo_fijo = df.iloc[-1]['Costo_fijo']
+        ultimo_costo_variable = df.iloc[-1]['costo_variable']
 
-    # Calcular "precio_total" para los nuevos meses
-    df_nuevos_meses['precio_total'] = df_nuevos_meses['Costo_fijo'] + df_nuevos_meses['costo_variable']
+        df_nuevos_meses = pd.DataFrame({
+            'Date': rango_meses,
+            'Costo_fijo': ultimo_costo_fijo,
+            'costo_variable': ultimo_costo_variable,
+            'precio_total': 0  # Se inicializa aquí y se calcula después
+        })
 
-    # Concatenar el DataFrame original (promedios) con el de los nuevos meses
-    df_actualizado = pd.concat([precios_electricidad_promedio, df_nuevos_meses], ignore_index=True)
-else:
-    df_actualizado = precios_electricidad_promedio
+        df = pd.concat([df, df_nuevos_meses], ignore_index=True)
 
-# Crear nueva columna "precio total" que sea Costo_fijo + costo_variable * variable (asumiendo que la "variable" es una constante dada; aquí se usa 1 para simplificar)
-# Si "variable" se refiere a otra columna o valor, este cálculo necesita ser ajustado acordemente.
-df_actualizado['precio_total'] = df_actualizado['Costo_fijo'] + df_actualizado['costo_variable'] * 250  # Cambiar "1" por la variable adecuada si necesario
+    return df
 
-#precio total * por ponderadores_inflacion_actualizado donde la key sea electricidad
-df_actualizado['precio_total'] = df_actualizado['precio_total'] * ponderadores_inflacion_actualizado.get('Electricidad', 1)
-df_actualizado
+def calcular_precio_total(df, consumo_variable=250):  # Asumiendo 250 como valor por defecto
+    df['costo_variable'] = df['costo_variable'].astype(float)
+    df['Costo_fijo'] = df['Costo_fijo'].astype(float)
+    df['precio_total'] = df['Costo_fijo'] + df['costo_variable'] * consumo_variable
+    return df
+
+def transformar_tarifas_electricidad(df):
+    df['Date'] = pd.to_datetime(df['Date']).dt.date  # Asegurarse de que está en formato de fecha
+    df.rename(columns={'precio_total': 'precio_promedio'}, inplace=True)  # Cambiar nombre de columna
+    df['categoria_indice'] = 'Electricidad'  # Columna nueva con valor 'Electricidad'
+    return df[['Date', 'categoria_indice', 'precio_promedio']]
+
+def procesar_datos_electricidad(query_electricidad):
+    df = obtener_y_promediar_datos_electricidad(query_electricidad)
+    df = extender_datos_hasta_actual(df)
+    df = calcular_precio_total(df)
+    df = transformar_tarifas_electricidad(df)
+    df['Date'] = pd.to_datetime(df['Date']).dt.date  # Asegúrate de cambiar 'Date' a 'date' después
+    df.rename(columns={'Date': 'date'}, inplace=True)
+
+    return df
+
+tarifas_electricidad = procesar_datos_electricidad(query_electricidad)
+alquileres_completo  = procesar_alquileres_no_ponderados()
+precios_supermercados = fetch_data(query_precios_supermercado)
+precios_supermercados['date'] = pd.to_datetime(precios_supermercados['date']).dt.date
+
+
+# Asumiendo que df1 es tu primer DataFrame, df2 el segundo y df3 el tercero
+# Primero, asegúrate de que las columnas de fecha tengan el mismo nombre y formato
+alquileres_completo['date'] = pd.to_datetime(alquileres_completo['date']).dt.date
+tarifas_electricidad.rename(columns={'Date': 'date'}, inplace=True)
+tarifas_electricidad['date'] = pd.to_datetime(tarifas_electricidad['date']).dt.date
+
+# Ahora, concatena los DataFrames
+df_final = pd.concat([precios_supermercados, alquileres_completo, tarifas_electricidad])
+df_final.sort_values(by='date', inplace=True)
+df_final.reset_index(drop=True, inplace=True)
+
+# Mostrar el DataFrame final
+print(df_final)
