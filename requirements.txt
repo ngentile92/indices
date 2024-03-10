@@ -11,3 +11,4 @@ beautifulsoup4
 cloudscraper
 numpy
 lxml
+sqlalchemy

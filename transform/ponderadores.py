@@ -1,28 +1,28 @@
 ponderadores_inflacion_actualizado = {
     "Alimentos": {
-            'Pan / pastas y cereales': 0.0971,
-            'Carnes y derivados': 0.1781,
-            'Pescados y mariscos': 0.0099,
-            'Leche/ productos lacteos/ huevos y alimentos vegetales': 0.0748,
-            'Aceites/ aderezos/ grasas y manteca': 0.0097,
-            'Frutas': 0.0251,
-            'Verduras/ tuberculos y legumbres': 0.0544,
-            'Azucar/ dulces/ chocolate/golosinas/ etc.': 0.0227,
-            'Otros alimentos': 0.0093,
-            },
-  'Bebidas no alcoholicas': 0.0555,
-  'Bebidas alcoholicas y tabaco': 0.0619,
-  'Prendas de vestir': 0.1273,
-  'Calzado': 0.0466,
-  'Electricidad': 0.0212,
-  'Alquileres': 0.084,
-  'celulares y pequenos electrodomesticos': 0.0338,
-  'farmacia': 0.0162,
-  'informatica': 0.0203,
-  'sin TACC': 0.0081,
-  'cuidado oral': 0.0081,
-  'libreria': 0.0162,
-  'limpieza': 0.01970000000000022
+        'Pan / pastas y cereales': 0.1519,
+        'Carnes y derivados': 0.1779,
+        'Pescados y mariscos': 0.015,
+        'Leche/ productos lacteos/ huevos y alimentos vegetales': 0.0899,
+        'Aceites/ aderezos/ grasas y manteca': 0.015,
+        'Frutas': 0.03,
+        'Verduras/ tuberculos y legumbres': 0.054,
+        'Azucar/ dulces/ chocolate/golosinas/ etc.': 0.028,
+        'Otros alimentos': 0.009,
+    },
+  'Bebidas no alcoholicas': 0.062,
+  'Bebidas alcoholicas y tabaco': 0.056,
+  'Prendas de vestir': 0.05,
+  'Calzado': 0.04,
+  'Electricidad': 0.025,
+  'Alquileres': 0.0799,
+  'celulares y pequenos electrodomesticos': 0.023,
+  'farmacia': 0.022,
+  'informatica': 0.02,
+  'sin TACC': 0.008,
+  'cuidado oral': 0.008,
+  'libreria': 0.016,
+  'limpieza': 0.01939999999999981,
   }
 ponderadores_alquileres = {
     "mendoza": 0.15,
@@ -30,6 +30,7 @@ ponderadores_alquileres = {
     "CABA": 0.45,
     "cordoba": 0.2,
 }
+
 
 # Reajustar los ponderadores para que la suma sea exactamente 1 y que cada ponderador no tenga más de 4 dígitos decimales
 

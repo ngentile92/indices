@@ -3,47 +3,31 @@ from transform.ponderadores import ponderadores_inflacion_actualizado, ponderado
 import ast
 import pandas as pd
 
+
+categorias_interes = ['farmacia', 'frutas', 'Bebidas no alcoholicas', 'limpieza', 'Azucar/ dulces/ chocolate/golosinas/ etc.', 'cuidado oral']
+
+
 query_precios_supermercado = """
-SELECT p.date, cp.categoria_indice, sum(p.precio)/count(p.producto) as precio_promedio
+SELECT p.date, cp.categoria_indice, p.precio, p.producto
 FROM `slowpoke-v1`.precios p
 JOIN `slowpoke-v1`.categorias_productos cp ON p.producto = cp.productos
-WHERE p.date >= '2024-03-01'
-GROUP BY p.date, cp.categoria_indice
+WHERE p.date >= '2024-02-25'
 """
 
 query_alquileres = """
 SELECT * FROM `slowpoke-v1`.alquileres
-WHERE date >= '2024-02-29';
+WHERE date >= '2024-02-23';
 """
 
 query_dolar = """
 SELECT date, dolar_blue FROM `slowpoke-v1`.dolar;
-WHERE date >= '2024-03-01';
+WHERE date >= '2024-02-25';
 """
 
 query_electricidad = """
 SELECT * FROM `slowpoke-v1`.tarifas_electricidad
 WHERE date >= '2024-02-01';
 """
-
-
-def aplicar_ponderador_supermercado(precios_supermercados, ponderadores_inflacion):
-
-    # Aplanar los ponderadores de inflación
-    ponderadores_aplanados = {}
-    for key, value in ponderadores_inflacion.items():
-        if isinstance(value, dict):
-            for sub_key, sub_value in value.items():
-                ponderadores_aplanados[sub_key] = sub_value
-        else:
-            ponderadores_aplanados[key] = value
-
-    # Aplicar ponderadores a los precios promedio
-    precios_supermercados['sum_ponderado'] = precios_supermercados.apply(
-        lambda row: row['precio_promedio'] * ponderadores_aplanados.get(row['categoria_indice'], 1), axis=1
-    )
-
-    return precios_supermercados
 
 
 def corregir_valores(dolar):
@@ -197,14 +181,81 @@ def procesar_datos_electricidad(query_electricidad):
     df.rename(columns={'Date': 'date'}, inplace=True)
 
     return df
+def completar_precios_faltantes(df, categorias):
+    df_original = df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    
+    # Procesar solo las filas de las categorías especificadas
+    df_filtrado = df[df['categoria_indice'].isin(categorias)]
+
+    # Ordenar y promediar precios para entradas duplicadas
+    df_filtrado.sort_values(by=['producto', 'date'], inplace=True)
+    df_filtrado = df_filtrado.groupby(['producto', 'date', 'categoria_indice']).agg({'precio': 'mean'}).reset_index()
+
+    df_completado = pd.DataFrame()
+
+    for categoria in categorias:
+        df_cat = df_filtrado[df_filtrado['categoria_indice'] == categoria]
+        primer_dia = df_cat['date'].min()
+        productos_dia_1 = df_cat[df_cat['date'] == primer_dia]['producto'].unique()
+        
+        for producto in productos_dia_1:
+            df_producto = df_cat[df_cat['producto'] == producto].copy()
+            df_producto.set_index('date', inplace=True)
+            df_producto = df_producto.resample('D').asfreq()
+
+            if df_producto['precio'].bfill().notna().any():
+                df_producto['precio'] = df_producto['precio'].fillna(df_producto['precio'].bfill().mean())
+            
+            df_producto['precio'] = df_producto['precio'].fillna(method='ffill')
+            df_producto.reset_index(inplace=True)
+            df_producto['producto'] = producto
+            df_producto['categoria_indice'] = categoria  # Asegurarse de asignar la categoría
+            df_completado = pd.concat([df_completado, df_producto])
+
+    # Asegurarse de que las categorías no procesadas se incluyen en el resultado final
+    df_final = pd.concat([df_completado, df_original[~df_original['categoria_indice'].isin(categorias)]])
+
+    # Asegurar que los tipos de datos son correctos y ordenar
+    df_final['precio'] = df_final['precio'].astype(float)
+    df_final['date'] = pd.to_datetime(df_final['date'])
+    df_final.sort_values(by=['categoria_indice', 'date', 'producto'], inplace=True)
+    
+    return df_final
 
 
+def calcular_precio_promedio(df):
+    """
+    Calcula el precio promedio por categoría y fecha.
+    
+    Args:
+    df (pd.DataFrame): DataFrame con los precios completados y las columnas 'date', 'categoria_indice', 'precio' y 'producto'.
+    
+    Returns:
+    pd.DataFrame: DataFrame con el precio promedio por categoría y fecha.
+    """
+    
+    # Asegurar que 'categoria_indice_y' es la columna correcta para 'categoria_indice' después de la unión
+    if 'categoria_indice_y' in df.columns:
+        df['categoria_indice'] = df['categoria_indice_y']
+    
+    # Calcular el precio promedio por categoría y fecha
+    df_precio_promedio = df.groupby(['date', 'categoria_indice']).agg(precio_promedio=('precio', 'mean')).reset_index()
+    
+    return df_precio_promedio
+
+def procesar_datos_supermercado(query_precios_supermercado, categorias_interes):
+    precios_supermercados = fetch_data(query_precios_supermercado)
+    precios_supermercados['date'] = pd.to_datetime(precios_supermercados['date']).dt.date
+    precios_supermercados = completar_precios_faltantes(precios_supermercados, categorias_interes)
+    precios_supermercados = calcular_precio_promedio(precios_supermercados)
+    precios_supermercados['date'] = pd.to_datetime(precios_supermercados['date']).dt.date
+    return precios_supermercados
 
 def generar_datos_por_categoria(query_precios_supermercado, query_alquileres, query_dolar, query_electricidad):
     tarifas_electricidad = procesar_datos_electricidad(query_electricidad)
     alquileres_completo  = procesar_alquileres_no_ponderados(query_alquileres, query_dolar)
-    precios_supermercados = fetch_data(query_precios_supermercado)
-    precios_supermercados['date'] = pd.to_datetime(precios_supermercados['date']).dt.date
+    precios_supermercados = procesar_datos_supermercado(query_precios_supermercado, categorias_interes)
     # Asumiendo que df1 es tu primer DataFrame, df2 el segundo y df3 el tercero
     # Primero, asegúrate de que las columnas de fecha tengan el mismo nombre y formato
     alquileres_completo['date'] = pd.to_datetime(alquileres_completo['date']).dt.date
@@ -216,10 +267,12 @@ def generar_datos_por_categoria(query_precios_supermercado, query_alquileres, qu
     df_final.sort_values(by='date', inplace=True)
     df_final.reset_index(drop=True, inplace=True)
     # eliminar todos datos inferiores a marzo
-    df_final = df_final[df_final['date'] >= pd.to_datetime('2024-03-01').date()]
+    df_final = df_final[df_final['date'] >= pd.to_datetime('2024-02-25').date()]
     return df_final
 
 
 if __name__ == "__main__":
     df_final = generar_datos_por_categoria(query_precios_supermercado, query_alquileres, query_dolar, query_electricidad)
     df_final.to_csv('datos_por_categoria_por_dia.csv', index=False)
+
+
