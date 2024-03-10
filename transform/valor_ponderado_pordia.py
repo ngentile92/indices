@@ -36,13 +36,13 @@ def calcular_indice_vida_adulta(df):
 
     # print (df) para la fecha base
     valor_base = df[df['date'] == fecha_base]['precio_ponderado'].sum()
-
+    print(valor_base)
     # 2. Calcular el valor total ponderado para cada fecha
     valor_total_ponderado_por_fecha = df.groupby('date')['precio_ponderado'].sum()
-
+    print(valor_total_ponderado_por_fecha)
     # 3. Calcular el índice para cada fecha
     indice_de_vida_adulta = (valor_total_ponderado_por_fecha / valor_base) * 100
-
+    print(indice_de_vida_adulta)
     # Transformar la Serie en DataFrame para una mejor visualización y manipulación
     indice_de_vida_adulta_df = indice_de_vida_adulta.reset_index()
     indice_de_vida_adulta_df.rename(columns={'precio_ponderado': 'indice_de_vida_adulta'}, inplace=True)
@@ -88,22 +88,6 @@ def calcular_indice_por_categoria(df, fecha_base):
     return indice_por_categoria_producto[['date', 'categoria_indice', 'indice']]
 
 
-def main():
-    datos_por_categoria = generar_datos_por_categoria(query_precios_supermercado, query_alquileres, query_dolar, query_electricidad)
-    valor_ponderado = aplicar_ponderacion(datos_por_categoria,ponderadores_inflacion_actualizado)
-    # tranformar a dataframe
-    valor_ponderado.to_csv("valor_ponderado_pordia.csv")
-    indice_vida_adulta = calcular_indice_vida_adulta(valor_ponderado)
-    indice_vida_adulta.to_csv("indice_vida_adulta.csv")
-    fecha_base = '2024-03-01'
-    indice_por_categoria = calcular_indice_por_categoria(valor_ponderado, fecha_base)
-    indice_por_categoria.to_csv("indice_por_categoria.csv")
-    # Suponiendo que 'df' es tu DataFrame con los datos
-    df_indices_categoria_producto = calcular_indice_por_categoria_producto(valor_ponderado, '2024-03-01')
-    print(df_indices_categoria_producto)
-    df_indices_categoria_producto.to_csv("indice_por_categoria_producto.csv")
-
-
 def calcular_indice_por_categoria_producto(df, fecha_base):
     # Convertir las fechas a datetime
     df['date'] = pd.to_datetime(df['date'])
@@ -130,4 +114,30 @@ def calcular_indice_por_categoria_producto(df, fecha_base):
 
 
 if __name__ == "__main__":
-    main()
+    datos_por_categoria = generar_datos_por_categoria(query_precios_supermercado, query_alquileres, query_dolar, query_electricidad)
+    valor_ponderado = aplicar_ponderacion(datos_por_categoria,ponderadores_inflacion_actualizado)
+    # tranformar a dataframe
+    valor_ponderado.to_csv("valor_ponderado_pordia.csv")
+    indice_vida_adulta = calcular_indice_vida_adulta(valor_ponderado)
+    indice_vida_adulta.to_csv("indice_vida_adulta.csv")
+    fecha_base = '2024-03-01'
+    indice_por_categoria = calcular_indice_por_categoria(valor_ponderado, fecha_base)
+    indice_por_categoria.to_csv("indice_por_categoria.csv")
+    # Suponiendo que 'df' es tu DataFrame con los datos
+    df_indices_categoria_producto = calcular_indice_por_categoria_producto(valor_ponderado, '2024-03-01')
+    print(df_indices_categoria_producto)
+    df_indices_categoria_producto.to_csv("indice_por_categoria_producto.csv")
+    # aplicar logica de ponderadores a los df_indices_categoria_producto
+    # Aplanar el diccionario de ponderadores para el mapeo
+    ponderadores_aplanados = {}
+    for categoria, ponderadores in ponderadores_inflacion_actualizado.items():
+        if isinstance(ponderadores, dict):
+            for subcategoria, valor in ponderadores.items():
+                ponderadores_aplanados[subcategoria] = valor
+        else:
+            ponderadores_aplanados[categoria] = ponderadores
+
+    df_indices_categoria_producto['ponderador'] = df_indices_categoria_producto['categoria_indice'].map(ponderadores_aplanados)
+    df_indices_categoria_producto['indice_ajustado'] = df_indices_categoria_producto['indice'] * df_indices_categoria_producto['ponderador']
+    df_indices_categoria_producto.to_csv("indice_por_categoria_producto_ajustado.csv")
+

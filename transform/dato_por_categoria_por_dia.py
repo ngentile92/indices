@@ -13,7 +13,7 @@ GROUP BY p.date, cp.categoria_indice
 
 query_alquileres = """
 SELECT * FROM `slowpoke-v1`.alquileres
-WHERE date >= '2024-03-01';
+WHERE date >= '2024-02-29';
 """
 
 query_dolar = """
